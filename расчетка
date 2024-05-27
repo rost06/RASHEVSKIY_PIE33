@@ -1,0 +1,336 @@
+import tkinter as tk
+from tkinter import ttk
+import time
+import random
+import threading
+
+
+class Car:
+    def __init__(self, id, length, max_speed, initial_speed, car_type):
+        self.id = id
+        self.length = length
+        self.max_speed = max_speed
+        self.current_speed = initial_speed
+        self.initial_speed = initial_speed
+        self.position = random.uniform(0, 5)
+        self.type = car_type
+        self.is_offroad = False
+        self.in_traffic_jam = False
+        self.in_accident = False
+
+    def move(self):
+        self.position += self.current_speed / 3600
+
+    def brake(self):
+        self.current_speed = max(self.current_speed - 1, 0)
+
+    def hard_brake(self):
+        self.current_speed = max(self.current_speed - 15, 0)
+
+    def accelerate(self):
+        self.current_speed = min(self.current_speed + 5, self.max_speed)
+
+
+class PassengerCar(Car):
+    def __init__(self, id, max_speed, initial_speed):
+        super().__init__(id, 4.5, max_speed, initial_speed, 'Легковой автомобиль')
+
+
+class Truck(Car):
+    def __init__(self, id, max_speed, initial_speed):
+        super().__init__(id, 12, max_speed, initial_speed, 'Грузовик')
+
+
+class Taxi(PassengerCar):
+    def __init__(self, id, max_speed, initial_speed):
+        super().__init__(id, max_speed, initial_speed)
+        self.type = 'Такси'
+        self.stop_timer = random.randint(30, 300)
+
+    def random_stop(self):
+        if self.stop_timer == 0:
+            self.current_speed = 0
+            self.stop_timer = random.randint(30, 300)
+        else:
+            self.stop_timer -= 1
+
+
+class Bus(Truck):
+    def __init__(self, id, max_speed, initial_speed, stops):
+        super().__init__(id, max_speed, initial_speed)
+        self.type = 'Автобус'
+        self.stops = stops
+
+    def regular_stop(self):
+        if int(self.position) in self.stops:
+            self.current_speed = 0
+
+
+class OffroadCar(Car):
+    def __init__(self, id, max_speed, initial_speed):
+        super().__init__(id, 4.5, max_speed, initial_speed, 'Внедорожник')
+
+    def go_offroad(self):
+        self.is_offroad = True
+        self.current_speed = 5
+
+
+class Road:
+    def __init__(self, length):
+        self.length = length
+        self.cars = []
+
+    def add_car(self, car):
+        self.cars.append(car)
+
+
+class Simulation:
+    def __init__(self, road):
+        self.road = road
+        self.time = 0
+        self.running = False
+        self.total_accidents = 0
+        self.total_traffic_jams = 0
+        self.total_completed = 0
+
+    def start(self):
+        self.running = True
+        while self.running:
+            self.update()
+            time.sleep(1)
+            self.time += 1
+
+    def stop(self):
+        self.running = False
+
+    def update(self):
+        for car in self.road.cars:
+            car.in_traffic_jam = False
+            car.in_accident = False
+
+            if isinstance(car, Taxi):
+                car.random_stop()
+            elif isinstance(car, Bus):
+                car.regular_stop()
+
+            if car.current_speed < car.max_speed:
+                car.accelerate()
+
+            car.move()
+
+            if car.position >= self.road.length:
+                self.total_completed += 1
+                self.road.cars.remove(car)
+                continue
+
+            self.check_collisions()
+            self.handle_traffic()
+
+        while len(self.road.cars) < 50:
+            self.add_random_car()
+
+    def add_random_car(self):
+        car_id = len(self.road.cars)
+        if car_id % 5 == 0:
+            car = Taxi(id=car_id, max_speed=random.randint(80, 120), initial_speed=random.randint(40, 60))
+        elif car_id % 5 == 1:
+            car = Bus(id=car_id, max_speed=random.randint(60, 80), initial_speed=random.randint(30, 50),
+                      stops=[2, 4, 6, 8])
+        elif car_id % 5 == 2:
+            car = OffroadCar(id=car_id, max_speed=random.randint(80, 120), initial_speed=random.randint(40, 60))
+        elif car_id % 5 == 3:
+            car = PassengerCar(id=car_id, max_speed=random.randint(100, 140), initial_speed=random.randint(50, 70))
+        else:
+            car = Truck(id=car_id, max_speed=random.randint(60, 100), initial_speed=random.randint(30, 50))
+        self.road.add_car(car)
+
+    def check_collisions(self):
+        positions = {}
+        for car in self.road.cars:
+            if car.position in positions:
+                if not car.in_accident and not positions[car.position].in_accident:
+                    self.total_accidents += 1
+                    car.in_accident = True
+                    positions[car.position].in_accident = True
+            positions[car.position] = car
+
+    def handle_traffic(self):
+        cars_with_slow_speed = [car for car in self.road.cars if car.current_speed <= 5]
+        if len(cars_with_slow_speed) < 2:
+            return
+
+        cars_with_slow_speed.sort(key=lambda car: car.position)
+
+        traffic_jams = 0
+        total_traffic_jams = 0
+
+        for i in range(len(cars_with_slow_speed) - 1):
+            car1 = cars_with_slow_speed[i]
+            car2 = cars_with_slow_speed[i + 1]
+            if car2.position - car1.position < 1:
+                traffic_jams += 1
+            else:
+                if traffic_jams > 0:
+                    total_traffic_jams += 1
+                traffic_jams = 0
+
+        if traffic_jams > 0:
+            total_traffic_jams += 1
+
+        self.total_traffic_jams += total_traffic_jams
+
+    def generate_statistics(self):
+        stats = {
+            'total_cars': len(self.road.cars),
+            'average_speed': self.calculate_average_speed(),
+            'car_types': self.count_car_types(),
+            'total_accidents': self.total_accidents,
+            'total_traffic_jams': self.total_traffic_jams,
+            'total_completed': self.total_completed
+        }
+        return stats
+
+    def calculate_average_speed(self):
+        if not self.road.cars:
+            return 0
+        total_speed = sum(car.current_speed for car in self.road.cars)
+        return total_speed / len(self.road.cars)
+
+    def count_car_types(self):
+        car_types = {'Легковой автомобиль': 0, 'Грузовик': 0, 'Такси': 0, 'Автобус': 0, 'Внедорожник': 0}
+        for car in self.road.cars:
+            if car.type in car_types:
+                car_types[car.type] += 1
+        return car_types
+
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Автосимулятор")
+        self.root.geometry("822x700")
+
+        self.road = Road(length=10)
+        self.simulation = Simulation(self.road)
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        self.start_button = tk.Button(self.root, text="Старт", command=self.start_simulation, font=("Arial", 16))
+        self.start_button.grid(row=0, column=0, padx=10, pady=10)
+
+        self.stop_button = tk.Button(self.root, text="Стоп", command=self.stop_simulation, font=("Arial", 16))
+        self.stop_button.grid(row=0, column=1, padx=10, pady=10)
+
+        self.stats_button = tk.Button(self.root, text="Статистика", command=self.show_statistics, font=("Arial", 16))
+        self.stats_button.grid(row=0, column=2, padx=10, pady=10)
+
+        self.tree = ttk.Treeview(self.root, columns=('ID', 'Тип', 'Скорость', 'Позиция'), show='headings', height=25)
+        self.tree.heading('ID', text='ID')
+        self.tree.heading('Тип', text='Тип')
+        self.tree.heading('Скорость', text='Скорость')
+        self.tree.heading('Позиция', text='Позиция')
+        self.tree.grid(row=1, column=0, columnspan=3, padx=10, pady=10, sticky='nsew')
+        self.tree.bind("<Double-1>", self.on_double_click)
+
+        self.sort_var = tk.StringVar()
+        self.sort_var.set("ID")
+        self.sort_menu = tk.OptionMenu(self.root, self.sort_var, "ID", "Тип", "Скорость", "Позиция",
+                                       command=self.sort_cars)
+        self.sort_menu.grid(row=2, column=0, columnspan=3, padx=10, pady=10)
+
+        self.add_sample_cars()
+
+    def add_sample_cars(self):
+        for _ in range(50):
+            self.simulation.add_random_car()
+
+        self.update_treeview()
+
+    def start_simulation(self):
+        self.simulation_thread = threading.Thread(target=self.simulation.start)
+        self.simulation_thread.start()
+        self.root.after(1000, self.update_treeview)
+
+    def stop_simulation(self):
+        self.simulation.stop()
+
+    def show_statistics(self):
+        stats = self.simulation.generate_statistics()
+        self.display_statistics(stats)
+
+    def display_statistics(self, stats):
+        stats_window = tk.Toplevel(self.root)
+        stats_window.title("Статистика")
+        s_s_count = sum(1 for car in self.road.cars if car.current_speed <= 5)
+        tk.Label(stats_window, text=f"Всего автомобилей: {stats['total_cars']}", font=("Arial", 16)).pack()
+        tk.Label(stats_window, text=f"Средняя скорость: {stats['average_speed']:.2f} км/ч", font=("Arial", 16)).pack()
+        tk.Label(stats_window, text=f"Количество аварий: {stats['total_accidents']}", font=("Arial", 16)).pack()
+        tk.Label(stats_window, text=f'Количество машин в "пробках": {s_s_count}', font=("Arial", 16)).pack()
+
+        car_types_frame = tk.Frame(stats_window)
+        car_types_frame.pack()
+
+        for car_type, count in stats['car_types'].items():
+            tk.Label(car_types_frame, text=f"{car_type}: {count}", font=("Arial", 16)).pack()
+
+    def sort_cars(self, sort_by):
+        if sort_by == "ID":
+            self.road.cars.sort(key=lambda car: car.id)
+        elif sort_by == "Тип":
+            self.road.cars.sort(key=lambda car: car.type)
+        elif sort_by == "Скорость":
+            self.road.cars.sort(key=lambda car: car.current_speed, reverse=True)
+        elif sort_by == "Позиция":
+            self.road.cars.sort(key=lambda car: car.position, reverse=True)
+        self.update_treeview()
+
+    def update_treeview(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for car in self.road.cars:
+            tag = ""
+            if car.in_accident:
+                tag = "accident"
+            elif car.current_speed <= 5:
+                tag = "slow_speed"
+            elif car.in_traffic_jam:
+                tag = "traffic_jam"
+            self.tree.insert('', 'end', values=(car.id, car.type, car.current_speed, car.position), tags=(tag,))
+        self.tree.tag_configure('accident', background='red')
+        self.tree.tag_configure('traffic_jam', background='yellow')
+
+        self.tree.tag_configure('slow_speed', background='yellow')
+        if self.simulation.running:
+            self.root.after(1000, self.update_treeview)
+
+    def on_double_click(self, event):
+        if self.tree.selection():
+            item = self.tree.selection()[0]
+            car_id = self.tree.item(item, "values")[0]
+            car = next(car for car in self.road.cars if car.id == int(car_id))
+            self.display_car_info(car)
+
+    def display_car_info(self, car):
+
+        car_info_window = tk.Toplevel(self.root)
+        car_info_window.title(f"Информация об автомобиле {car.id}")
+
+        tk.Label(car_info_window, text=f"ID: {car.id}", font=("Arial", 16)).pack()
+        tk.Label(car_info_window, text=f"Тип: {car.type}", font=("Arial", 16)).pack()
+        tk.Label(car_info_window, text=f"Текущая скорость: {car.current_speed} км/ч", font=("Arial", 16)).pack()
+        tk.Label(car_info_window, text=f"Позиция: {car.position} км", font=("Arial", 16)).pack()
+        tk.Label(car_info_window, text=f"В пробке: {'Да' if car.in_traffic_jam else 'Нет'}", font=("Arial", 16)).pack()
+        tk.Label(car_info_window, text=f"В аварии: {'Да' if car.in_accident else 'Нет'}", font=("Arial", 16)).pack()
+
+
+root = tk.Tk()
+app = App(root)
+root.mainloop()
+
+
+
+
+
+
+
